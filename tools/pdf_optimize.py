@@ -272,7 +272,20 @@ def optimize(ocr_path, out_path, source_path=None, do_graft=True,
                 pim = pikepdf.PdfImage(img).as_pil_image()
                 g = pim if pim.mode in ("L", "1") else pim.convert("L")
                 arr = np.asarray(g.convert("L"))
-                thr = otsu_threshold(arr)
+                # Real greyscale/colour content (covers, plates) is information,
+                # not JPEG ringing: leave it alone.
+                mid = float(((arr >= 16) & (arr <= 239)).mean())
+                rgb = np.asarray(pim.convert("RGB")).astype(int) if pim.mode not in ("L", "1") else None
+                tinted = rgb is not None and int((rgb.max(2) - rgb.min(2)).max()) > 24
+                if mid > 0.01 or tinted:
+                    stats["skipped_colour"] += 1
+                    if verbose:
+                        print("  page %4d kept: %.2f%% mid-grey pixels, tinted=%s" % (i + 1, mid * 100, tinted))
+                    continue
+                # No mid-grey pixels: every threshold in 16..239 gives the same
+                # bitmap, so take the middle one. Otsu can land inside the dark
+                # cluster (e.g. 12) and turn ringing-level ink into paper.
+                thr = 127
                 bw = Image.fromarray((arr > thr).astype(np.uint8) * 255).convert("1")
                 if do_jbig2:
                     set_jbig2(img, jbig2_generic_encode(bw, jbig2_bin), bw.size[0], bw.size[1])
